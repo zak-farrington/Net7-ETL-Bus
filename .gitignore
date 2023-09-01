@@ -1,0 +1,15 @@
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.userosscache
+*.tmp
+*.temp
+_ReSharper*/
+*.resharper
+.idea/
+*.sln.docstates
+packages/
+.DS_Store
+Thumbs.db
