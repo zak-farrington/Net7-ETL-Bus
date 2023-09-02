@@ -6,6 +6,8 @@ namespace Net7EtlBus.Models.GoogleApi
     {
         public List<ElevationResult> Results { get; set; }
         public string Status { get; set; }
+
+        public double? Elevation => Results?.FirstOrDefault()?.Elevation;
     }
 
     public class ElevationResult
