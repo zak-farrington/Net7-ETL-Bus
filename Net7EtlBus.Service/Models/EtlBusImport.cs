@@ -1,12 +1,13 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-
-namespace Net7EtlBus.Service.Models
+﻿namespace Net7EtlBus.Service.Models
 {
     public class EtlBusImport
     {
+        public int Id { get; set; }
+        public required string FileName { get; set; }
+        public required string FileChecksum { get; set; }
+        public bool IsActive { get; set; } 
+
+        public DateTime ImportStartTimeUtc { get; set; }
+        public DateTime EndDateTimeUtc { get; set;}
     }
 }
