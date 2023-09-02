@@ -5,6 +5,9 @@ namespace Net7EtlBus.Models.GoogleApi
     public class GeocodeResponse : GoogleApiResponseBase
     {
         public List<GeocodeResult> Results { get; set; }
+
+        public double? Latitude => Results?.FirstOrDefault()?.Geometry?.Location?.Latitude;
+        public double? Longitude => Results?.FirstOrDefault()?.Geometry?.Location?.Longitude;
     }
 
     public class Coordinates
