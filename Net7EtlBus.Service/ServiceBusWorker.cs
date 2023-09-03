@@ -10,8 +10,9 @@ using Net7EtlBus.Service.Core.Interfaces;
 using Net7EtlBus.Service.Data;
 using Net7EtlBus.Service.Models;
 using Net7EtlBus.Service.Models.EtlBusDb;
+using Net7EtlBus.Service.Utilities;
+using Newtonsoft.Json;
 using System.Collections.Concurrent;
-using System.Linq;
 using System.Threading.Tasks.Dataflow;
 
 namespace Net7EtlBus.Service
@@ -93,38 +94,39 @@ namespace Net7EtlBus.Service
         {
             try
             {
-                _logger.LogInformation("Message has been receieved.");
+                var etlServiceBusMessage = JsonConvert.DeserializeObject<EtlServiceBusMessage>(args.Message.Body.ToString());
+
+                _logger.LogInformation($"Message has been receieved. Force run is: {etlServiceBusMessage.ForceRun.ToString()}");
 
                 // Step 1 - check if there is a file for processing
                 // TODO: Download from FTP and extract 
                 var csvFileName = "geo_data.csv";
                 
-                var etlRunConditions = await EvaluateEtlRunConditionsAsync(csvFileName).ConfigureAwait(false);
+                var etlRunConditions = await EvaluateEtlRunConditionsAsync(csvFileName, etlServiceBusMessage.ForceRun).ConfigureAwait(false);
                 if (!etlRunConditions.ShouldRun)
                 {
                     _logger.LogError("Unable to continue. This run will abort.");
-                    await args.CompleteMessageAsync(args.Message).ConfigureAwait(false);
                     return;
                 }
 
                 // Record must be updated once we have finished processing.
-                var csvImportRecord = etlRunConditions.EtlBusImport;
+                var etlBusImportRecord = etlRunConditions.EtlBusImport;
 
                 // Step 2 - read records from CSV
-                var zipCodesPendingProcessingHashMap = _dataHandlerLazy.Value.GetRecords<ZipCodeRecord>(csvFileName)?.ToDictionary(zr => zr.ZipCode, zr => zr);
-                // TODO: Handle Duplicates still
-                var hasRecordsForProcessing = zipCodesPendingProcessingHashMap?.Any() == true;
+                var zipCodesPendingProcessingHashMap = _dataHandlerLazy.Value.GetRecords<ZipCodeRecord>(csvFileName)?.ToDictionary(zr => (zr.ZipCode, zr.StateCode), zr => zr);
+
+                var recordsForProcessing = zipCodesPendingProcessingHashMap?.Keys.Count;
+                var hasRecordsForProcessing = recordsForProcessing > 0;
 
                 if (!hasRecordsForProcessing)
                 {
                     // Error encountered or no mappings to process.
                     _logger.LogError("Unable to continue. No mappings parsed from CSV. This run will abort.");
-                    await args.CompleteMessageAsync(args.Message).ConfigureAwait(false);
                     return;
                 }
                 else
                 {
-                    _logger.LogInformation($"Found ${zipCodesPendingProcessingHashMap.Count()} records in {csvFileName}");
+                    _logger.LogInformation($"Found ${recordsForProcessing} records in {csvFileName}");
 
                     // Step 3 - TPL data flow to update and save records
                     var bufferBlock = new BufferBlock<ZipCodeDetails>();
@@ -153,11 +155,11 @@ namespace Net7EtlBus.Service
                             }
                         }
                         return zipCodeRecord;
-                    }, new ExecutionDataflowBlockOptions { MaxDegreeOfParallelism = 5 });  // Adjust as per Google API rate limits
+                    }, new ExecutionDataflowBlockOptions { MaxDegreeOfParallelism = _transformMaxDegreeOfParallelism }); 
 
                     using var throttler = new SemaphoreSlim(1);
-
-                    var batchedZipCodeDetailsForUpserting = new ConcurrentBag<ZipCodeDetails>();
+                    // Storing batched records in concurrent bag to support multiple threads, if neccessary. 
+                    var batchedZipCodeDetailsForUpserting = new ConcurrentBag<ZipCodeDetails>();  
                     var actionBlock = new ActionBlock<ZipCodeDetails>(async zipCodeRecord =>
                     {
                         zipCodeRecord.LastModifiedDateUtc = DateTime.UtcNow;
@@ -168,7 +170,7 @@ namespace Net7EtlBus.Service
                             batchedZipCodeDetailsForUpserting.Add(zipCodeRecord);
 
                             // Bulk save up records
-                            if (batchedZipCodeDetailsForUpserting.Count >= 5)
+                            if (batchedZipCodeDetailsForUpserting.Count >= _batchRecordSaveCount)
                             {
                                 await using var etlBusDbContext = new EtlBusDbContext(_appConfig);
                                 await etlBusDbContext.BulkInsertOrUpdateAsync(batchedZipCodeDetailsForUpserting).ConfigureAwait(false);
@@ -187,7 +189,7 @@ namespace Net7EtlBus.Service
                             throttler.Release();
 
                         }
-                    }, new ExecutionDataflowBlockOptions { BoundedCapacity = 1 });
+                    }, new ExecutionDataflowBlockOptions { BoundedCapacity = _actionBoundedCapactiy });
 
                     bufferBlock.LinkTo(transformBlock, new DataflowLinkOptions { PropagateCompletion = true });
                     transformBlock.LinkTo(actionBlock, new DataflowLinkOptions { PropagateCompletion = true });
@@ -195,34 +197,42 @@ namespace Net7EtlBus.Service
                     // Only process zip codes that are missing details, or have not been updated recently.
                     using var etlDbContext = new EtlBusDbContext(_appConfig);
 
-                    DateTime validRecordsThreshold = DateTime.UtcNow.AddDays(-30);  // TODO: Move to config
+                    DateTime validRecordsThreshold = DateTime.UtcNow.AddDays((_validRecordDaysTtl * -1));  
+
+                    // Because zip codes can cross state borders we have to use tuple & custom composite key. 
+                    var existingKeys = new HashSet<string>(
+                        zipCodesPendingProcessingHashMap.Keys.Select(k => ZipCodeHelpers.GetCompositeKey(k.ZipCode, k.StateCode))
+                    );
 
                     var dbExistingValidZipCodes = etlDbContext.ZipCodeDetails
                         .Where(r =>
                             !string.IsNullOrEmpty(r.ZipCode) &&
-                            zipCodesPendingProcessingHashMap.Keys.Contains(r.ZipCode) &&
+                            existingKeys.Contains(r.CompositeKey) && 
                             r.Longitude != null &&
                             r.Latitude != null &&
                             r.Elevation != null &&
                             r.Timezone != null &&
                             r.LastModifiedDateUtc <= validRecordsThreshold
-                        ).Select(r => r.ZipCode).ToHashSet();
+                        ).Select(r => ZipCodeHelpers.GetCompositeKey(r.ZipCode, r.StateCode))
+                        .ToHashSet();
 
-                    if(dbExistingValidZipCodes.Any())
+                    if (dbExistingValidZipCodes.Any())
                     {
                         _logger.LogInformation($"{dbExistingValidZipCodes.Count} exist in database will not be processed.");
                         zipCodesPendingProcessingHashMap = zipCodesPendingProcessingHashMap
-                            .Where(r => !dbExistingValidZipCodes.Contains(r.Key))
+                            .Where(r => !dbExistingValidZipCodes.Contains(ZipCodeHelpers.GetCompositeKey(r.Key.ZipCode, r.Key.StateCode)))
                             .ToDictionary(r => r.Key, r => r.Value);
                     }
 
                     if (zipCodesPendingProcessingHashMap?.Keys.Count > 0)
                     {
                         // Load zip codes into buffer block
-                        foreach (var zipCodeRecord in zipCodesPendingProcessingHashMap.Values.Take(10))  // TODO: Remove take when debugging.
+                        foreach (var zipCodeRecord in zipCodesPendingProcessingHashMap.Values)  // TODO: Remove take when debugging.
                         {
                             var zipCodeWithDetails = new ZipCodeDetails
                             {
+                                CompositeKey = ZipCodeHelpers.GetCompositeKey(zipCodeRecord.ZipCode, zipCodeRecord.StateCode),
+                                ImportId = etlBusImportRecord.Id,
                                 ZipCode = zipCodeRecord.ZipCode,
                                 StateCode = zipCodeRecord.StateCode,
                                 State = zipCodeRecord.State,
@@ -234,6 +244,19 @@ namespace Net7EtlBus.Service
 
                         // Step 4 - complete, delete file, update import record
                         bufferBlock.Complete();
+
+                        using var etlBusDbContext = new EtlBusDbContext(_appConfig);
+                        etlBusImportRecord = await etlBusDbContext.EtlBusImports.FirstOrDefaultAsync(i => i.Id == etlBusImportRecord.Id).ConfigureAwait(false);
+                        if (etlBusImportRecord != null)
+                        {
+                            etlBusImportRecord.Status = nameof(Constants.ProcessingStatus.Complete);
+                            etlBusImportRecord.EndDateTimeUtc = DateTime.UtcNow;
+                            await etlBusDbContext.SaveChangesAsync().ConfigureAwait(false);
+                        }
+                        else
+                        {
+                            _logger.LogCritical("Could not finalize import record.");
+                        }
                     }
 
                     await actionBlock.Completion.ConfigureAwait(false);
@@ -247,7 +270,7 @@ namespace Net7EtlBus.Service
             finally
             {
                 _logger.LogInformation("Message has been completed.");
-                await args.CompleteMessageAsync(args.Message).ConfigureAwait(false); ;
+                await args.CompleteMessageAsync(args.Message).ConfigureAwait(false);
             }
         }
 
@@ -260,8 +283,10 @@ namespace Net7EtlBus.Service
         /// <summary>
         /// Determine if ETL process already ran or should continue.
         /// </summary>
+        /// <param name="fileName">File name for the CSV file to process.</param>
+        /// <param name="forceRun">If true, will re-run regardless if file has already beeen processed or in progress.</param>
         /// <returns></returns>
-        private async Task<EtlRunConditions> EvaluateEtlRunConditionsAsync(string fileName)
+        private async Task<EtlRunConditions> EvaluateEtlRunConditionsAsync(string fileName, bool forceRun = false)
         {
             if (string.IsNullOrEmpty(fileName))
             {
@@ -274,7 +299,16 @@ namespace Net7EtlBus.Service
                 };
             }
 
-            string fileChecksum = Utilities.FileSystem.GetFileChecksum(fileName);
+            var fileChecksum = Utilities.FileSystem.GetFileChecksum(fileName);
+
+            if(string.IsNullOrEmpty(fileChecksum)) {
+                _logger.LogInformation("File checksum failed.");
+                return new EtlRunConditions
+                {
+                    ShouldRun = false,
+                    FileNameForProcessing = fileName,
+                };
+            }
 
             var etlBusImport = new EtlBusImport
             {
@@ -282,23 +316,25 @@ namespace Net7EtlBus.Service
                 IsActive = true,
                 FileName = fileName,
                 FileChecksum = fileChecksum,
+                Status = nameof(Constants.ProcessingStatus.Running),
             };
 
-            //using var dbContext = new EtlBusDbContext();
-            ////var hasAlreadyProcessed = dbContext.EtlBusImport.Where();
+            using var etlBusDbContext = new EtlBusDbContext(_appConfig);
+            // Check for existing record with matching checksum, where it was imported in last 30 days and has completed
+            var isProcessingOrAlreadyProcessed = etlBusDbContext.EtlBusImports.Where(r => r.FileChecksum.Equals(fileChecksum) && (r.IsActive || (r.ImportStartTimeUtc > DateTime.UtcNow.AddDays(_validRecordDaysTtl * -1) && r.EndDateTimeUtc != null))).FirstOrDefault()?.Id > 0;
 
-            //if (false)
-            //{
-            //    _logger.LogInformation("CSV file has already been processed. Will not continue.");
-            //    Utilities.FileSystem.DeleteFile(fileName);
-            //    return new EtlRunConditions
-            //    {
-            //        ShouldRun = false,
-            //        FileNameForProcessing = fileName,
-            //    };
-            //}
-            //await dbContext.AddAsync(csvImportRecord).ConfigureAwait(false);
-            //await dbContext.SaveChangesAsync().ConfigureAwait(false);
+            if (!forceRun && isProcessingOrAlreadyProcessed)
+            {
+                _logger.LogInformation("CSV file is in progress or already been processed. Will not continue.");
+                //Utilities.FileSystem.DeleteFile(fileName);
+                return new EtlRunConditions
+                {
+                    ShouldRun = false,
+                    FileNameForProcessing = fileName,
+                };
+            }
+            await etlBusDbContext.AddAsync(etlBusImport).ConfigureAwait(false);
+            await etlBusDbContext.SaveChangesAsync().ConfigureAwait(false);
 
             return new EtlRunConditions
             {
@@ -307,37 +343,5 @@ namespace Net7EtlBus.Service
                 EtlBusImport = etlBusImport,
             };
         }
-       
-        ///// <summary>
-        ///// Parse CSV file and return mappings along with duplicates.
-        ///// </summary>
-        ///// <param name="fileName">Full file path to CSV file.</param>
-        ///// <returns>Object that contains parsed mappings.</returns>
-        //private Dictionary<string, ZipCodeRecord> GetZipCodesFromCsv(string fileName)
-        //{
-        //   var zipCodesHashMap = new Dictionary<string, ZipCodeRecord>();
-
-        //    try
-        //    {
-        //        foreach (var record in _dataHandlerLazy.Value.GetRecords<ZipCodeRecord>(fileName).ToList())
-        //        {
-        //            var zipCode = record.ZipCode;
-
-        //            if (!zipCodesHashMap.ContainsKey(zipCode))
-        //            {
-        //                // no duplicates, add to dictionary
-        //                zipCodesHashMap.Add(zipCode, record);
-        //            }
-        //            // TODO: handle duplicates.
-        //        }
-
-        //    }
-        //    catch (Exception ex)
-        //    {
-        //        _logger.LogInformation(ex, $"There was a problem reading CSV {fileName}");
-        //    }
-
-        //    return zipCodesHashMap;
-        //}
     }
 }
