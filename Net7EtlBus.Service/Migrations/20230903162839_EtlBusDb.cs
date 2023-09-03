@@ -21,8 +21,9 @@ namespace Net7EtlBus.Service.Migrations
                     FileName = table.Column<string>(type: "text", nullable: false),
                     FileChecksum = table.Column<string>(type: "text", nullable: false),
                     IsActive = table.Column<bool>(type: "boolean", nullable: false),
-                    ImportStartTimeUtc = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
-                    EndDateTimeUtc = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
+                    Status = table.Column<string>(type: "text", nullable: false),
+                    ImportStartTimeUtc = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
+                    EndDateTimeUtc = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
                 },
                 constraints: table =>
                 {
@@ -33,6 +34,7 @@ namespace Net7EtlBus.Service.Migrations
                 name: "ZipCodeDetails",
                 columns: table => new
                 {
+                    CompositeKey = table.Column<string>(type: "text", nullable: false),
                     ZipCode = table.Column<string>(type: "text", nullable: false),
                     Latitude = table.Column<double>(type: "double precision", nullable: true),
                     Longitude = table.Column<double>(type: "double precision", nullable: true),
@@ -48,7 +50,7 @@ namespace Net7EtlBus.Service.Migrations
                 },
                 constraints: table =>
                 {
-                    table.PrimaryKey("PK_ZipCodeDetails", x => x.ZipCode);
+                    table.PrimaryKey("PK_ZipCodeDetails", x => x.CompositeKey);
                 });
         }
 

@@ -12,7 +12,7 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace Net7EtlBus.Service.Migrations
 {
     [DbContext(typeof(EtlBusDbContext))]
-    [Migration("20230902175147_EtlBusDb")]
+    [Migration("20230903162839_EtlBusDb")]
     partial class EtlBusDb
     {
         /// <inheritdoc />
@@ -27,7 +27,7 @@ namespace Net7EtlBus.Service.Migrations
 
             modelBuilder.Entity("Net7EtlBus.Service.Models.EtlBusDb.ZipCodeDetails", b =>
                 {
-                    b.Property<string>("ZipCode")
+                    b.Property<string>("CompositeKey")
                         .HasColumnType("text");
 
                     b.Property<string>("City")
@@ -67,7 +67,11 @@ namespace Net7EtlBus.Service.Migrations
                     b.Property<string>("Timezone")
                         .HasColumnType("text");
 
-                    b.HasKey("ZipCode");
+                    b.Property<string>("ZipCode")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("CompositeKey");
 
                     b.ToTable("ZipCodeDetails");
                 });
@@ -80,7 +84,7 @@ namespace Net7EtlBus.Service.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
-                    b.Property<DateTime>("EndDateTimeUtc")
+                    b.Property<DateTime?>("EndDateTimeUtc")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("FileChecksum")
@@ -91,11 +95,15 @@ namespace Net7EtlBus.Service.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
-                    b.Property<DateTime>("ImportStartTimeUtc")
+                    b.Property<DateTime?>("ImportStartTimeUtc")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.HasKey("Id");
 
