@@ -14,7 +14,6 @@ This application demonstrates:
 - **FTP** file retrieval of CSV
 - Handle rate limiting
 - Unit and integration testing with **xUnit**
-- Organizing
 
 ### Dependencies
 To run this project, you will need:
