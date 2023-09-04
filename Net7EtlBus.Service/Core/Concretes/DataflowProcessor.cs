@@ -132,13 +132,13 @@ namespace Net7EtlBus.Service.Core.Concretes
                     r.Latitude != null &&
                     r.Elevation != null &&
                     r.Timezone != null &&
-                    r.LastModifiedDateUtc <= validRecordsThreshold
+                    r.LastModifiedDateUtc >= validRecordsThreshold
                 ).Select(r => ZipCodeHelpers.GetCompositeKey(r.ZipCode, r.StateCode))
                 .ToHashSet();
 
             if (dbExistingValidZipCodes.Any())
             {
-                _logger.LogInformation($"{dbExistingValidZipCodes.Count} exist in database will not be processed.");
+                _logger.LogInformation($"{dbExistingValidZipCodes.Count} records exist in database will not be processed.");
                 zipCodesPendingProcessingHashMap = zipCodesPendingProcessingHashMap
                     .Where(r => !dbExistingValidZipCodes.Contains(r.Key))
                     .ToDictionary(r => r.Key, r => r.Value);
