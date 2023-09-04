@@ -1,5 +1,9 @@
-﻿using Microsoft.Extensions.DependencyInjection;
+﻿using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Net7EtlBus.Service.Core.Concretes;
+using Net7EtlBus.Service.Core.Interfaces;
+using Net7EtlBus.Service.Models;
 
 namespace Net7EtlBus.Service
 {
@@ -14,8 +18,11 @@ namespace Net7EtlBus.Service
             Host.CreateDefaultBuilder(args)
                 .ConfigureServices((hostContext, services) =>
                 {
-                    services.AddHttpClient<IGoogleApiService, GoogleApiService>();
                     services.AddHostedService<ServiceBusWorker>();
+                    services.AddHttpClient<IGoogleApiService, GoogleApiService>();
+                    services.AddTransient<IDataflowProcessor, DataflowProcessor>();
+                    services.AddTransient(sp => new Lazy<IDataflowProcessor>(() => sp.GetRequiredService<IDataflowProcessor>()));
+                    services.Configure<ProcessingSettings>(hostContext.Configuration.GetSection("ProcessingSettings"));
                 });
     }
 }
