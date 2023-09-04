@@ -16,6 +16,7 @@ namespace Net7EtlBus.Service
                 {
                     services.AddHttpClient<IGoogleApiService, GoogleApiService>();
                     services.AddHostedService<ServiceBusWorker>();
+                    services.Configure<ProcessingSettings>(hostContext.Configuration.GetSection("ProcessingSettings"));
                 });
     }
 }
