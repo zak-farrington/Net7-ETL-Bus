@@ -25,7 +25,7 @@ namespace Net7EtlBus.Service.Data
             options.UseNpgsql(connectionStrings);
         }
 
-        public DbSet<EtlBusImport> EtlBusImports { get; set; }
-        public DbSet<ZipCodeDetails> ZipCodeDetails { get; set; }
+        public virtual DbSet<EtlBusImport> EtlBusImports { get; set; }
+        public virtual DbSet<ZipCodeDetails> ZipCodeDetails { get; set; }
     }
 }

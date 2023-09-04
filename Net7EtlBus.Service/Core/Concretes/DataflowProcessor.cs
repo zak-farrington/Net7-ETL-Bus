@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Identity.Client;
 using Net7EtlBus.Models;
 using Net7EtlBus.Service.Core.Interfaces;
 using Net7EtlBus.Service.Data;
@@ -16,23 +17,30 @@ using static Net7EtlBus.Service.Utilities.Constants;
 namespace Net7EtlBus.Service.Core.Concretes
 {
 
-    public class DataflowProcessor : IDataflowProcessor
+    public class DataflowProcessor : IDataflowProcessor, IDisposable
     {
         private readonly IConfiguration _appConfig;
         private readonly ILogger<DataflowProcessor> _logger;
         private readonly IGoogleApiService _googleApiService;
 
         private readonly ProcessingSettings _processingSettings;
+        
+        private EtlBusDbContext _etlBusDbContext; // Only used for tests & mocking, otherwise we instantiate on the fly for thread-safe operations.
 
         public DataflowProcessor(IConfiguration appConfig, ILogger<DataflowProcessor> logger, IGoogleApiService googleApiService, IOptions<ProcessingSettings> processingSettings)
+            : this(appConfig, logger, googleApiService, processingSettings, null)
+        {
+        }
+
+        public DataflowProcessor(IConfiguration appConfig, ILogger<DataflowProcessor> logger, IGoogleApiService googleApiService, IOptions<ProcessingSettings> processingSettings, EtlBusDbContext etlBusDbContext)
         {
             _appConfig = appConfig;
             _logger = logger;
             _googleApiService = googleApiService;
-
             _processingSettings = processingSettings.Value;
+            _etlBusDbContext = etlBusDbContext;  // Only used for tests & mocking, otherwise we instantiate on the fly for thread-safe operations.
         }
-        
+
         /// <summary>
         /// Determine if ETL process already ran or should continue.
         /// </summary>
@@ -43,8 +51,8 @@ namespace Net7EtlBus.Service.Core.Concretes
         {
             if (string.IsNullOrEmpty(fileName))
             {
-                // No file found
-                _logger.LogInformation("No CSV file available. Will not process.");
+                // No file found.
+                _logger.LogInformation("No file available. Will not process.");
                 return new EtlRunConditions
                 {
                     ShouldRun = false,
@@ -73,13 +81,14 @@ namespace Net7EtlBus.Service.Core.Concretes
                 Status = nameof(Constants.ProcessingStatus.Running),
             };
 
-            using var etlBusDbContext = new EtlBusDbContext(_appConfig);
-            // Check for existing record with matching checksum, where it was imported in last 30 days and has completed
+
+            using var etlBusDbContext = _etlBusDbContext  == null ? new EtlBusDbContext(_appConfig) : _etlBusDbContext;
+            // Check for existing record with matching checksum, where it was imported since ValidRecordDaysTtl and has completed.
             var isProcessingOrAlreadyProcessed = etlBusDbContext.EtlBusImports.Where(r => r.FileChecksum.Equals(fileChecksum) && (r.IsActive || (r.ImportStartTimeUtc > DateTime.UtcNow.AddDays(_processingSettings.ValidRecordDaysTtl * -1) && r.EndDateTimeUtc != null))).FirstOrDefault()?.Id > 0;
 
             if (!forceRun && isProcessingOrAlreadyProcessed)
             {
-                _logger.LogInformation("CSV file is in progress or already been processed. Will not continue.");
+                _logger.LogInformation("Import is in progress or already been processed. Will not continue.");
                 //Utilities.FileSystem.DeleteFile(fileName);
                 return new EtlRunConditions
                 {
@@ -106,7 +115,7 @@ namespace Net7EtlBus.Service.Core.Concretes
         /// <returns></returns>
         public List<ZipCodeRecord> GetRecordsExcludingPreviouslyProcessed(Dictionary<string, ZipCodeRecord>? zipCodesPendingProcessingHashMap)
         {
-            using var etlDbContext = new EtlBusDbContext(_appConfig);
+            using var etlBusDbContext = _etlBusDbContext == null ? new EtlBusDbContext(_appConfig) : _etlBusDbContext;
 
             DateTime validRecordsThreshold = DateTime.UtcNow.AddDays((_processingSettings.ValidRecordDaysTtl * -1));
 
@@ -115,7 +124,7 @@ namespace Net7EtlBus.Service.Core.Concretes
                 zipCodesPendingProcessingHashMap.Keys.Select(k => k)
             );
 
-            var dbExistingValidZipCodes = etlDbContext.ZipCodeDetails
+            var dbExistingValidZipCodes = etlBusDbContext.ZipCodeDetails
                 .Where(r =>
                     !string.IsNullOrEmpty(r.ZipCode) &&
                     existingKeys.Contains(r.CompositeKey) &&
@@ -152,17 +161,17 @@ namespace Net7EtlBus.Service.Core.Concretes
             TransformBlock<ZipCodeDetails, ZipCodeDetails> transformBlock;
             ActionBlock<ZipCodeDetails> actionBlock;
 
-            // Use concurrent bag in case action block uses multiple threads
+            // Use concurrent bag in case action block uses multiple threads.
             var batchedZipCodeDetailsForUpserting = new ConcurrentBag<ZipCodeDetails>();
 
             var totalProcessedUploadedRecordCount = 0;
 
-            // Func for handling database upload
+            // Func for handling database upload.
             Func<ConcurrentBag<ZipCodeDetails>, Task> performDatabaseUpload = async (recordsForUploading) =>
             {
                 if (recordsForUploading.Count > 0)
                 {
-                    await using var etlBusDbContext = new EtlBusDbContext(_appConfig);
+                    using var etlBusDbContext = _etlBusDbContext == null ? new EtlBusDbContext(_appConfig) : _etlBusDbContext;
                     await etlBusDbContext.BulkInsertOrUpdateAsync(recordsForUploading).ConfigureAwait(false);
                     await etlBusDbContext.SaveChangesAsync().ConfigureAwait(false);
                     _logger.LogInformation($"Saved {recordsForUploading.Count} to db.");
@@ -215,7 +224,7 @@ namespace Net7EtlBus.Service.Core.Concretes
                     {
                         batchedZipCodeDetailsForUpserting.Add(zipCodeRecord);
 
-                        // Bulk save records
+                        // Bulk save records.
                         if (batchedZipCodeDetailsForUpserting.Count >= _processingSettings.BatchRecordSaveCount)
                         {
                             await performDatabaseUpload(batchedZipCodeDetailsForUpserting).ConfigureAwait(false);
@@ -236,7 +245,7 @@ namespace Net7EtlBus.Service.Core.Concretes
 
             if (zipCodeRecords.Count > 0)
             {
-                // Load zip codes into buffer block
+                // Load zip codes into buffer block.
                 foreach (var zipCodeRecord in zipCodeRecords)
                 {
                     var zipCodeWithDetails = new ZipCodeDetails
@@ -258,7 +267,7 @@ namespace Net7EtlBus.Service.Core.Concretes
 
                 if (batchedZipCodeDetailsForUpserting.Count > 0)
                 {
-                    // Perform upload for any remaining records that fell outside of batch requirement
+                    // Perform upload for any remaining records that fell outside of min. batch size.
                     await performDatabaseUpload(batchedZipCodeDetailsForUpserting).ConfigureAwait(false);
                 }
             }
@@ -273,7 +282,7 @@ namespace Net7EtlBus.Service.Core.Concretes
         /// <returns></returns>
         public async Task<EtlBusImport?> SetImportRecordCompleteAsync(EtlBusImport? etlBusImportRecord, ProcessingStatus terminalStatus = ProcessingStatus.Complete)
         {
-            using var etlBusDbContext = new EtlBusDbContext(_appConfig);
+            using var etlBusDbContext = _etlBusDbContext == null ? new EtlBusDbContext(_appConfig) : _etlBusDbContext;
             etlBusImportRecord = await etlBusDbContext.EtlBusImports.FirstOrDefaultAsync(i => i.Id == etlBusImportRecord.Id).ConfigureAwait(false);
             if (etlBusImportRecord != null)
             {
@@ -287,6 +296,24 @@ namespace Net7EtlBus.Service.Core.Concretes
             }
 
             return etlBusImportRecord;
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                if (_etlBusDbContext != null)
+                {
+                    _etlBusDbContext.DisposeAsync().GetAwaiter().GetResult();
+                }
+            }
+        }
+
+        public void Dispose()
+        {
+            // Do not change this code. Put cleanup code in 'Dispose(bool disposing)' method
+            Dispose(disposing: true);
+            GC.SuppressFinalize(this);
         }
     }
 }
