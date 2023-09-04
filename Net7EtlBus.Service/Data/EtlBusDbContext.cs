@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using EFCore.BulkExtensions;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Net7EtlBus.Service.Models;
 using Net7EtlBus.Service.Models.EtlBusDb;
@@ -25,7 +26,7 @@ namespace Net7EtlBus.Service.Data
             options.UseNpgsql(connectionStrings);
         }
 
-        public DbSet<EtlBusImport> EtlBusImports { get; set; }
-        public DbSet<ZipCodeDetails> ZipCodeDetails { get; set; }
+        public virtual DbSet<EtlBusImport> EtlBusImports { get; set; }
+        public virtual DbSet<ZipCodeDetails> ZipCodeDetails { get; set; }
     }
 }

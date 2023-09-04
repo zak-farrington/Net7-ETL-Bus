@@ -14,7 +14,7 @@ using Newtonsoft.Json;
 
 namespace Net7EtlBus.Service
 {
-    public class ServiceBusWorker : BackgroundService
+    public class ServiceBusWorker : BackgroundService, IDisposable
     {
         private readonly ILogger<ServiceBusWorker> _logger;
         private readonly IConfiguration _appConfig;
@@ -77,7 +77,7 @@ namespace Net7EtlBus.Service
             {
                 // Step 1 - check if there is a file for processing.
                 // TODO: Download from FTP and extract 
-                var csvFileName = "geo_data.csv";
+                var csvFileName = Constants.GeoDataCsvFileName;
 
                 var etlRunConditions = await _dataFlowProcessorLazy.Value.EvaluateEtlRunConditionsAsync(csvFileName, forceRun).ConfigureAwait(false);
                 if (!etlRunConditions.ShouldRun)
@@ -120,11 +120,11 @@ namespace Net7EtlBus.Service
                 _logger.LogError("Unhandled error has been countered while processing message.");
                 if (etlBusImportRecord?.Id > 0)
                 {
-                    // We have a EtlBusImpor record, so let's mark it with an error status.
+                    // We have a EtlBusImport record, so let's mark it with an error status.
                     await _dataFlowProcessorLazy.Value.SetImportRecordCompleteAsync(etlBusImportRecord, Constants.ProcessingStatus.Error).ConfigureAwait(false);
                 }
                 throw ex;
-            }
+            } 
             finally
             {
                 _logger.LogInformation("Message has been completed.");
