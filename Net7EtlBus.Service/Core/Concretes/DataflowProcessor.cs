@@ -11,6 +11,7 @@ using Net7EtlBus.Service.Models;
 using Net7EtlBus.Service.Models.EtlBusDb;
 using Net7EtlBus.Service.Utilities;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Threading.Tasks.Dataflow;
 using static Net7EtlBus.Service.Utilities.Constants;
 
@@ -164,6 +165,7 @@ namespace Net7EtlBus.Service.Core.Concretes
             // Use concurrent bag in case action block uses multiple threads.
             var batchedZipCodeDetailsForUpserting = new ConcurrentBag<ZipCodeDetails>();
 
+            var batchTimer = new Stopwatch();
             var totalProcessedUploadedRecordCount = 0;
 
             // Func for handling database upload.
@@ -174,8 +176,7 @@ namespace Net7EtlBus.Service.Core.Concretes
                     using var etlBusDbContext = _etlBusDbContext == null ? new EtlBusDbContext(_appConfig) : _etlBusDbContext;
                     await etlBusDbContext.BulkInsertOrUpdateAsync(recordsForUploading).ConfigureAwait(false);
                     await etlBusDbContext.SaveChangesAsync().ConfigureAwait(false);
-                    _logger.LogInformation($"Saved {recordsForUploading.Count} to db.");
-                    recordsForUploading.Clear();
+                    _logger.LogInformation($"Saved {recordsForUploading.Count} to db. Batch processing time: ${batchTimer.ElapsedMilliseconds} ms.");
                 }
             };
 
@@ -228,8 +229,8 @@ namespace Net7EtlBus.Service.Core.Concretes
                         if (batchedZipCodeDetailsForUpserting.Count >= _processingSettings.BatchRecordSaveCount)
                         {
                             await performDatabaseUpload(batchedZipCodeDetailsForUpserting).ConfigureAwait(false);
-                            
                             batchedZipCodeDetailsForUpserting.Clear();
+                            batchTimer.Restart();
                         }
                     }
                     catch (Exception ex)
@@ -260,15 +261,23 @@ namespace Net7EtlBus.Service.Core.Concretes
                     };
                     bufferBlock.Post(zipCodeWithDetails);
                 }
-                
                 bufferBlock.Complete();
-                await Task.WhenAll(bufferBlock.Completion, transformBlock.Completion, actionBlock.Completion);
+                batchTimer = Stopwatch.StartNew();
 
+                try
+                {
+                    await Task.WhenAll(bufferBlock.Completion, transformBlock.Completion, actionBlock.Completion);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Dataflow terminated with an error.");
+                }
 
                 if (batchedZipCodeDetailsForUpserting.Count > 0)
                 {
                     // Perform upload for any remaining records that fell outside of min. batch size.
                     await performDatabaseUpload(batchedZipCodeDetailsForUpserting).ConfigureAwait(false);
+                    batchTimer.Stop();
                 }
             }
 

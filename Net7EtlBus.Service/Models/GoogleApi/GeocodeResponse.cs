@@ -8,6 +8,8 @@ namespace Net7EtlBus.Models.GoogleApi
 
         public double? Latitude => Results?.FirstOrDefault()?.Geometry?.Location?.Latitude;
         public double? Longitude => Results?.FirstOrDefault()?.Geometry?.Location?.Longitude;
+
+        public override bool IsSuccessful => string.IsNullOrEmpty(ErrorMessage) && Latitude.HasValue && Longitude.HasValue;
     }
 
     public class Coordinates

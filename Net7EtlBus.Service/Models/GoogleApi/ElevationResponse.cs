@@ -8,6 +8,7 @@ namespace Net7EtlBus.Models.GoogleApi
         public string Status { get; set; }
 
         public double? Elevation => Results?.FirstOrDefault()?.Elevation;
+        public override bool IsSuccessful => string.IsNullOrEmpty(ErrorMessage) && Elevation.HasValue;
     }
 
     public class ElevationResult

@@ -22,7 +22,15 @@ namespace Net7EtlBus.Service
                     services.AddHttpClient<IGoogleApiService, GoogleApiService>();
                     services.AddTransient<IDataflowProcessor, DataflowProcessor>();
                     services.AddTransient(sp => new Lazy<IDataflowProcessor>(() => sp.GetRequiredService<IDataflowProcessor>()));
-                    services.Configure<ProcessingSettings>(hostContext.Configuration.GetSection("ProcessingSettings"));
+
+                    var processingSettings = hostContext.Configuration.GetSection("ProcessingSettings");
+
+                    if(processingSettings == null)
+                    {
+                        throw new Exception("Could not read ProcessingSettings from app config.");
+                    }
+
+                    services.Configure<ProcessingSettings>(processingSettings);
                 });
     }
 }

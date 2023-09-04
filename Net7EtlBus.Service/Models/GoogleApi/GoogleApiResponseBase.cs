@@ -7,6 +7,6 @@ namespace Net7EtlBus.Models.GoogleApi
         // Google APIs will return error_message if there's a problem.
         [JsonPropertyName("error_message")]
         public string? ErrorMessage { get; set; }
-        public bool IsSuccessful => string.IsNullOrEmpty(ErrorMessage);
+        public virtual bool IsSuccessful => string.IsNullOrEmpty(ErrorMessage);
     }
 }

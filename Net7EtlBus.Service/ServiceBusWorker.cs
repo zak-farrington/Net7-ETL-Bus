@@ -1,27 +1,28 @@
 ﻿using Azure.Messaging.ServiceBus;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Net7EtlBus.Models;
 using Net7EtlBus.Service.Core.Concretes;
 using Net7EtlBus.Service.Core.Interfaces;
-using Net7EtlBus.Service.Data;
 using Net7EtlBus.Service.Models;
-using Net7EtlBus.Service.Models.EtlBusDb;
 using Net7EtlBus.Service.Utilities;
 using Newtonsoft.Json;
+using System.Diagnostics;
 
 namespace Net7EtlBus.Service
 {
-    public class ServiceBusWorker : BackgroundService, IDisposable
+    public class ServiceBusWorker : BackgroundService
     {
         private readonly ILogger<ServiceBusWorker> _logger;
         private readonly IConfiguration _appConfig;
 
         private readonly string _sbConnectionString;
         private readonly string _sbQueueName;
+
         private readonly ServiceBusClient _serviceBusClient;
+        private readonly ServiceBusProcessor _serviceBusProcessor;
+        
         private readonly Lazy<IFileDataHandler> _dataHandlerLazy;
         private readonly Lazy<IDataflowProcessor> _dataFlowProcessorLazy;
 
@@ -36,6 +37,7 @@ namespace Net7EtlBus.Service
             _sbQueueName = _appConfig["ServiceBus.QueueName"] ?? throw new InvalidOperationException("ServiceBusQueue name is is missing.");
 
             _serviceBusClient = new ServiceBusClient(_sbConnectionString);
+            _serviceBusProcessor = _serviceBusClient.CreateProcessor(_sbQueueName, new ServiceBusProcessorOptions());
         }
 
         /// <summary>
@@ -47,17 +49,34 @@ namespace Net7EtlBus.Service
         {
             _logger.LogInformation("Background worker started.");
 
-            var serviceBusProcessor = _serviceBusClient.CreateProcessor(_sbQueueName, new ServiceBusProcessorOptions());
-
             // Configure the message and error handlers
-            serviceBusProcessor.ProcessMessageAsync += ProcessServiceBusMessageAsync;
-            serviceBusProcessor.ProcessErrorAsync += ErrorHandler;
+            _serviceBusProcessor.ProcessMessageAsync += ProcessServiceBusMessageAsync;
+            _serviceBusProcessor.ProcessErrorAsync += ErrorHandler;
 
-            //Start processing
-            await serviceBusProcessor.StartProcessingAsync(stoppingToken);
+            // Start processing
+            await _serviceBusProcessor.StartProcessingAsync(stoppingToken);
             _logger.LogInformation("Service Bus listener has been started.");
 
             await Task.Delay(Timeout.Infinite, stoppingToken);
+        }
+
+        /// <summary>
+        /// Clean up when service is stopped.
+        /// </summary>
+        /// <param name="cancellationToken"></param>
+        /// <returns></returns>
+        public override async Task StopAsync(CancellationToken cancellationToken)
+        {
+            // Call your DisposeAsync method or directly put your cleanup code here
+            if (_serviceBusClient != null)
+            {
+                await _serviceBusClient.DisposeAsync();
+            }
+            if (_serviceBusProcessor != null)
+            {
+                await _serviceBusProcessor.StopProcessingAsync();
+                await _serviceBusProcessor.DisposeAsync();
+            }
         }
 
         /// <summary>
@@ -67,6 +86,9 @@ namespace Net7EtlBus.Service
         /// <returns></returns>
         private async Task ProcessServiceBusMessageAsync(ProcessMessageEventArgs args)
         {
+            Stopwatch timer = new Stopwatch(); 
+            timer.Start(); 
+
             var etlServiceBusMessage = JsonConvert.DeserializeObject<EtlServiceBusMessage>(args.Message.Body?.ToString());
             var forceRun = etlServiceBusMessage?.ForceRun ?? false;
             _logger.LogInformation($"Service Bus message receieved. Force run is: {forceRun}");
@@ -127,7 +149,8 @@ namespace Net7EtlBus.Service
             } 
             finally
             {
-                _logger.LogInformation("Message has been completed.");
+                timer.Stop();
+                _logger.LogInformation($"Message has been completed. Processing time: {timer.ElapsedMilliseconds} ms");
                 await args.CompleteMessageAsync(args.Message).ConfigureAwait(false);
             }
         }
