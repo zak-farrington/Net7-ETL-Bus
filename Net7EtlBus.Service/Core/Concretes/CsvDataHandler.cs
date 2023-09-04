@@ -4,7 +4,7 @@ using System.Globalization;
 
 namespace Net7EtlBus.Service.Core.Concretes
 {
-    public class CsvDataHandler : IDataHandler
+    public class CsvDataHandler : IFileDataHandler
     {
         /// <summary>
         /// Read records from CSV file.
