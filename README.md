@@ -15,6 +15,7 @@ An on-demand ETL process activated by an Azure Service Bus Queue trigger. After 
 - Add interface for remote file retrieval
 - Add **FTP** file retriever to fetch zip file or CSV
 - Additional tests _(solve mocking of EFCore.BulkExtensions -> `BulkInsertOrUpdateAsync`)_
+- Add performance analytics  
 - Handle rate limiting
 
 ### Dependencies
@@ -30,6 +31,6 @@ To run this project, you will need:
 ### Screenshots
 ![Unit and Integration Tests](/Images/Net7EtlBusTests.png)
 
-![Triggering Process via Service Bus message](/Images/MessageTriggerForceRunFalse.png)
+![Triggering Process via Service Bus message](/Images/MessageTriggerForceRunTrue.png)
 
 ![Transformed records populated in database](/Images/PgAdminRecordsPopulated.png)
