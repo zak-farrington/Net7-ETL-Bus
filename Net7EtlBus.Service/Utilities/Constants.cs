@@ -2,6 +2,11 @@
 {
     public static class Constants
     {
+        /// <summary>
+        /// TODO: Convert to regex when FTP file retriever is complete.
+        /// </summary>
+        public const string GeoDataCsvFileName = "geo_data.csv";
+
         public enum ProcessingStatus
         {
             None,

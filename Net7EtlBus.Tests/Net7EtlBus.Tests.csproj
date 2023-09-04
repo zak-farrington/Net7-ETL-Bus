@@ -28,4 +28,10 @@
     <ProjectReference Include="..\Net7EtlBus.Service\Net7EtlBus.Service.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="appSettings.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
 </Project>

@@ -77,7 +77,7 @@ namespace Net7EtlBus.Service
             {
                 // Step 1 - check if there is a file for processing.
                 // TODO: Download from FTP and extract 
-                var csvFileName = "geo_data.csv";
+                var csvFileName = Constants.GeoDataCsvFileName;
 
                 var etlRunConditions = await _dataFlowProcessorLazy.Value.EvaluateEtlRunConditionsAsync(csvFileName, forceRun).ConfigureAwait(false);
                 if (!etlRunConditions.ShouldRun)
@@ -124,7 +124,7 @@ namespace Net7EtlBus.Service
                     await _dataFlowProcessorLazy.Value.SetImportRecordCompleteAsync(etlBusImportRecord, Constants.ProcessingStatus.Error).ConfigureAwait(false);
                 }
                 throw ex;
-            }
+            } 
             finally
             {
                 _logger.LogInformation("Message has been completed.");

@@ -286,7 +286,7 @@ namespace Net7EtlBus.Service.Core.Concretes
             etlBusImportRecord = await etlBusDbContext.EtlBusImports.FirstOrDefaultAsync(i => i.Id == etlBusImportRecord.Id).ConfigureAwait(false);
             if (etlBusImportRecord != null)
             {
-                etlBusImportRecord.Status = nameof(terminalStatus);
+                etlBusImportRecord.Status = terminalStatus.ToString();
                 etlBusImportRecord.EndDateTimeUtc = DateTime.UtcNow;
                 await etlBusDbContext.SaveChangesAsync().ConfigureAwait(false);
             }

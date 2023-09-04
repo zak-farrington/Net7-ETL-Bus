@@ -1,5 +1,3 @@
-using Net7EtlBus.Models;
-
 namespace Net7EtlBus.Tests.CsvDataHandler
 {
     public class Integration
